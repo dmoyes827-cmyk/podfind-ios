@@ -35,6 +35,10 @@ jobs:
           API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
           set -euo pipefail
+          if [[ -z "$XCODE_PROJECT" ]]; then
+            echo "::notice::Skipping TestFlight deployment until XCODE_PROJECT is configured."
+            exit 0
+          fi
           for name in XCODE_PROJECT XCODE_SCHEME APP_BUNDLE_ID APPLE_TEAM_ID \
             CERTIFICATE_BASE64 CERTIFICATE_PASSWORD PROFILE_BASE64 API_KEY_BASE64 \
             API_KEY_ID API_ISSUER_ID; do

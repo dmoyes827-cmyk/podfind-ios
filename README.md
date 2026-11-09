@@ -7,8 +7,9 @@ The [TestFlight workflow](.github/workflows/testflight-deploy.yml) archives, sig
 exports and uploads the app on pushes to `main` or when run manually from
 **Actions → Deploy to TestFlight → Run workflow**. The first upload must finish
 processing in App Store Connect before it appears in TestFlight; add testers there.
-This repository currently has **no Xcode project**, so the workflow cannot
-successfully deploy until the project and the configuration below are added.
+This repository currently has **no Xcode project**, so the workflow skips
+deployment successfully until `XCODE_PROJECT` is configured. Once it is set,
+the project and the configuration below are required for deployment.
 
 ### Prepare the app and Apple credentials
 
