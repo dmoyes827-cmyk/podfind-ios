@@ -1,0 +1,118 @@
+name: Deploy to TestFlight
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testflight-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Archive, sign, and upload
+        shell: bash
+        env:
+          XCODE_PROJECT: ${{ vars.XCODE_PROJECT }}
+          XCODE_SCHEME: ${{ vars.XCODE_SCHEME }}
+          APP_BUNDLE_ID: ${{ vars.APP_BUNDLE_ID }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          BUILD_NUMBER_OFFSET: ${{ vars.BUILD_NUMBER_OFFSET || '0' }}
+          CERTIFICATE_BASE64: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+          PROFILE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
+          API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          for name in XCODE_PROJECT XCODE_SCHEME APP_BUNDLE_ID APPLE_TEAM_ID \
+            CERTIFICATE_BASE64 CERTIFICATE_PASSWORD PROFILE_BASE64 API_KEY_BASE64 \
+            API_KEY_ID API_ISSUER_ID; do
+            if [[ -z "${!name-}" ]]; then
+              echo "::error::Missing required variable or secret: $name"
+              exit 1
+            fi
+          done
+          if [[ ! -d "$XCODE_PROJECT" ]]; then
+            echo "::error::XCODE_PROJECT does not point to an existing .xcodeproj."
+            exit 1
+          fi
+          if [[ ! "$APP_BUNDLE_ID" =~ ^[A-Za-z0-9.-]+$ ]] ||
+             [[ ! "$APPLE_TEAM_ID" =~ ^[A-Za-z0-9]+$ ]] ||
+             [[ ! "$API_KEY_ID" =~ ^[A-Za-z0-9]+$ ]] ||
+             [[ ! "$BUILD_NUMBER_OFFSET" =~ ^[0-9]{1,6}$ ]]; then
+            echo "::error::Invalid bundle ID, team ID, API key ID, or build number offset."
+            exit 1
+          fi
+
+          umask 077
+          work_dir="$(mktemp -d "$RUNNER_TEMP/testflight.XXXXXX")"
+          keychain="$work_dir/signing.keychain-db"
+          profile_path=""
+          api_key_path=""
+          cleanup() {
+            security delete-keychain "$keychain" >/dev/null 2>&1 || true
+            [[ -z "$profile_path" ]] || rm -f "$profile_path"
+            [[ -z "$api_key_path" ]] || rm -f "$api_key_path"
+            rm -rf "$work_dir"
+          }
+          trap cleanup EXIT
+
+          printf '%s' "$CERTIFICATE_BASE64" | base64 -D > "$work_dir/certificate.p12"
+          printf '%s' "$PROFILE_BASE64" | base64 -D > "$work_dir/profile.mobileprovision"
+          security cms -D -i "$work_dir/profile.mobileprovision" > "$work_dir/profile.plist"
+          profile_uuid=$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$work_dir/profile.plist")
+          profile_team=$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$work_dir/profile.plist")
+          if [[ ! "$profile_uuid" =~ ^[A-Fa-f0-9-]+$ ]] || [[ "$profile_team" != "$APPLE_TEAM_ID" ]]; then
+            echo "::error::The provisioning profile UUID or team ID is invalid."
+            exit 1
+          fi
+          mkdir -p "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
+          profile_path="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/$profile_uuid.mobileprovision"
+          cp "$work_dir/profile.mobileprovision" "$profile_path"
+
+          keychain_password="$(openssl rand -hex 32)"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$work_dir/certificate.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain"
+
+          build_number=$((10#$BUILD_NUMBER_OFFSET + GITHUB_RUN_NUMBER))
+          xcodebuild -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -archivePath "$work_dir/PodFind.xcarchive" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY='Apple Distribution' PROVISIONING_PROFILE_SPECIFIER="$profile_uuid" \
+            CURRENT_PROJECT_VERSION="$build_number" archive
+
+          /usr/libexec/PlistBuddy -c 'Add :method string app-store-connect' "$work_dir/ExportOptions.plist"
+          /usr/libexec/PlistBuddy -c "Add :teamID string $APPLE_TEAM_ID" "$work_dir/ExportOptions.plist"
+          /usr/libexec/PlistBuddy -c 'Add :signingStyle string manual' "$work_dir/ExportOptions.plist"
+          /usr/libexec/PlistBuddy -c 'Add :provisioningProfiles dict' "$work_dir/ExportOptions.plist"
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:$APP_BUNDLE_ID string $profile_uuid" "$work_dir/ExportOptions.plist"
+          xcodebuild -exportArchive -archivePath "$work_dir/PodFind.xcarchive" \
+            -exportPath "$work_dir/export" -exportOptionsPlist "$work_dir/ExportOptions.plist"
+
+          shopt -s nullglob
+          ipas=("$work_dir/export/"*.ipa)
+          if [[ ${#ipas[@]} -ne 1 ]]; then
+            echo "::error::Expected exactly one exported IPA."
+            exit 1
+          fi
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          api_key_path="$HOME/.appstoreconnect/private_keys/AuthKey_${API_KEY_ID}.p8"
+          printf '%s' "$API_KEY_BASE64" | base64 -D > "$api_key_path"
+          xcrun altool --upload-app -f "${ipas[0]}" -t ios \
+            --apiKey "$API_KEY_ID" --apiIssuer "$API_ISSUER_ID"
