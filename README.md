@@ -1,6 +1,16 @@
 # podfind-ios
 PodFind - iOS app for tracking AirPods using Apple APIs (Find My, CoreLocation, Nearby Interaction)
 
+## Tests
+
+Run the deployment configuration validation tests with Python 3 and Bash:
+
+```sh
+python3 -B -m unittest discover -s tests -v
+```
+
+The tests stop before signing or uploading; they do not require Apple credentials.
+
 ## TestFlight deployment
 
 The [TestFlight workflow](.github/workflows/testflight-deploy.yml) archives, signs,
