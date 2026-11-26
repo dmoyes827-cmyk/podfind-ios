@@ -1,15 +1,32 @@
 # podfind-ios
 PodFind - iOS app for tracking AirPods using Apple APIs (Find My, CoreLocation, Nearby Interaction)
 
+## Tests
+
+Run the deployment configuration validation tests with Python 3 and Bash:
+
+```sh
+python3 -B -m unittest discover -s tests -v
+```
+
+The tests stop before signing or uploading; they do not require Apple credentials.
+
 ## TestFlight deployment
 
 The [TestFlight workflow](.github/workflows/testflight-deploy.yml) archives, signs,
 exports and uploads the app on pushes to `main` or when run manually from
 **Actions → Deploy to TestFlight → Run workflow**. The first upload must finish
 processing in App Store Connect before it appears in TestFlight; add testers there.
+<<<<<<< HEAD
 This repository currently has **no Xcode project**, so the workflow skips
 deployment successfully until `XCODE_PROJECT` is configured. Once it is set,
 the project and the configuration below are required for deployment.
+=======
+This repository currently has **no Xcode project**, so the workflow cannot
+successfully deploy until the project and the configuration below are added.
+The deployment job is skipped until the `XCODE_PROJECT` repository variable is
+set; after it is set, any other missing configuration is reported as an error.
+>>>>>>> origin/main
 
 ### Prepare the app and Apple credentials
 
