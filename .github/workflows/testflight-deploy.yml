@@ -36,7 +36,7 @@ jobs:
           API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
           set -euo pipefail
-          if [[ -z "$XCODE_PROJECT" ]]; then
+          if [[ -z "${XCODE_PROJECT-}" ]]; then
             echo "::notice::Skipping TestFlight deployment until XCODE_PROJECT is configured."
             exit 0
           fi

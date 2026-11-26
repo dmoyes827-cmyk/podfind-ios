@@ -81,8 +81,12 @@ class TestFlightValidationTests(unittest.TestCase):
                     else:
                         environment[name] = value
                     result = self.run_deployment(environment)
-                    self.assertEqual(result.returncode, 1)
-                    self.assertIn(f"Missing required variable or secret: {name}", result.stdout)
+                    if name == "XCODE_PROJECT":
+                        self.assertEqual(result.returncode, 0)
+                        self.assertIn("Skipping TestFlight deployment until XCODE_PROJECT is configured.", result.stdout)
+                    else:
+                        self.assertEqual(result.returncode, 1)
+                        self.assertIn(f"Missing required variable or secret: {name}", result.stdout)
                     self.assertNotIn("validation-passed", result.stderr)
 
     def test_project_must_be_an_existing_directory(self):
